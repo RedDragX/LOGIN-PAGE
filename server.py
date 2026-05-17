@@ -1,6 +1,4 @@
-# server.py (MySQL Native FastAPI Backend)
 
-```python
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
@@ -406,42 +404,4 @@ async def startup_seed():
             )
 
     print("MySQL backend started successfully")
-```
 
-# requirements.txt
-
-```txt
-fastapi
-uvicorn
-python-dotenv
-pymysql
-bcrypt
-PyJWT
-email-validator
-```
-
-# .env
-
-```env
-DB_HOST=YOUR_HOSTINGER_DB_HOST
-DB_USER=u290914486_pgroom_user
-DB_PASSWORD=YOUR_PASSWORD
-DB_NAME=u290914486_pgroom_db
-JWT_SECRET=pgroomsecret
-```
-
-# Render Start Command
-
-```bash
-uvicorn server:app --host 0.0.0.0 --port 10000
-```
-
-# Important
-
-Your MySQL tables must contain these columns:
-
-* users
-* properties
-* bookings
-
-This rewrite is fully MySQL-native and removes all MongoDB usage.
