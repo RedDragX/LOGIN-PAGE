@@ -414,7 +414,119 @@ async def otp_login_verify(payload: OTPVerifyRequest):
         },
     }
 
+@app.post("/api/auth/otp/register/send")
+async def otp_register_send(payload: RegisterIn):
 
+    phone = normalize_phone(payload.phone)
+
+    existing_email = db_fetchone(
+        "SELECT id FROM users WHERE email=%s",
+        (payload.email,)
+    )
+
+    if existing_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already exists"
+        )
+
+    existing_phone = db_fetchone(
+        "SELECT id FROM users WHERE phone=%s",
+        (phone,)
+    )
+
+    if existing_phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Phone already exists"
+        )
+
+    otp = str(random.randint(1000, 9999))
+
+    db_execute(
+        "DELETE FROM otp_codes WHERE phone=%s",
+        (phone,)
+    )
+
+    db_execute(
+        """
+        INSERT INTO otp_codes
+        (phone, otp, created_at, expires_at)
+        VALUES (%s,%s,NOW(),DATE_ADD(NOW(), INTERVAL 10 MINUTE))
+        """,
+        (phone, otp)
+    )
+
+    delivery = send_msg91_otp(
+        phone,
+        payload.name,
+        otp
+    )
+
+    return {
+        "message": "OTP sent successfully",
+        "delivery": delivery
+    }
+
+
+@app.post("/api/auth/otp/register/verify")
+async def otp_register_verify(payload: RegisterIn):
+
+    phone = normalize_phone(payload.phone)
+
+    otp_row = db_fetchone(
+        """
+        SELECT *
+        FROM otp_codes
+        WHERE phone=%s
+        """,
+        (phone,)
+    )
+
+    if not otp_row:
+        raise HTTPException(
+            status_code=400,
+            detail="OTP not found"
+        )
+
+    user_id = str(uuid.uuid4())
+
+    db_execute(
+        """
+        INSERT INTO users
+        (
+            id,
+            name,
+            email,
+            phone,
+            password,
+            role,
+            wallet_balance,
+            created_at
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+        """,
+        (
+            user_id,
+            payload.name,
+            payload.email,
+            phone,
+            hash_password(payload.password),
+            payload.role,
+            0
+        )
+    )
+
+    token = create_token(
+        user_id,
+        payload.role
+    )
+
+    return {
+        "message": "Registration successful",
+        "token": token
+    }
+    
 @app.get("/api/properties")
 async def get_properties(
     area: Optional[str] = None,
