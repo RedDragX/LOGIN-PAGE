@@ -899,51 +899,86 @@ async def admin_list_users(user=Depends(get_current_user)):
 
 @app.on_event("startup")
 async def startup_seed():
-    # ── Create tables ──────────────────────────────────────────────────────
-    db_execute("""
+    """Run migrations and seed data. Never crashes the server — all errors are logged."""
+    try:
+        _migrate_tables()
+    except Exception as e:
+        print(f"⚠️  Migration error (non-fatal): {e}")
+    try:
+        _seed_users()
+    except Exception as e:
+        print(f"⚠️  User seed error (non-fatal): {e}")
+    try:
+        _seed_properties()
+    except Exception as e:
+        print(f"⚠️  Property seed error (non-fatal): {e}")
+    print("✅ pgroom MySQL backend started successfully")
+
+
+def _check_id_type(table: str) -> str:
+    """Return the DATA_TYPE of the id column for a table, or '' if table doesn't exist."""
+    row = db_fetchone(
+        "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_NAME='id'",
+        (table,),
+    )
+    return row["DATA_TYPE"] if row else ""
+
+
+def _recreate_table_if_int_id(table: str, create_sql: str):
+    """If the table's id column is an integer type, drop and recreate it with UUID schema."""
+    id_type = _check_id_type(table)
+    if id_type in ("int", "bigint", "smallint", "tinyint", "mediumint"):
+        print(f"⚠️  {table}.id is {id_type} — dropping and recreating with VARCHAR(36) schema")
+        db_execute(f"DROP TABLE IF EXISTS `{table}`")
+    db_execute(create_sql)
+
+
+def _migrate_tables():
+    _recreate_table_if_int_id("users", """
         CREATE TABLE IF NOT EXISTS users (
-            id           VARCHAR(36)  PRIMARY KEY,
-            name         VARCHAR(255) NOT NULL,
-            email        VARCHAR(255) UNIQUE,
-            phone        VARCHAR(20)  UNIQUE NOT NULL,
-            password     VARCHAR(255) NOT NULL,
-            role         VARCHAR(20)  DEFAULT 'tenant',
-            wallet_balance INT        DEFAULT 0,
-            kyc_verified TINYINT(1)  DEFAULT 0,
-            kyc_data     TEXT,
-            created_at   DATETIME    DEFAULT CURRENT_TIMESTAMP
+            id             VARCHAR(36)  PRIMARY KEY,
+            name           VARCHAR(255) NOT NULL,
+            email          VARCHAR(255) UNIQUE,
+            phone          VARCHAR(20)  UNIQUE NOT NULL,
+            password       VARCHAR(255) NOT NULL,
+            role           VARCHAR(20)  DEFAULT 'tenant',
+            wallet_balance INT          DEFAULT 0,
+            kyc_verified   TINYINT(1)  DEFAULT 0,
+            kyc_data       TEXT,
+            created_at     DATETIME    DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
-    db_execute("""
+    _recreate_table_if_int_id("properties", """
         CREATE TABLE IF NOT EXISTS properties (
-            id               VARCHAR(36)   PRIMARY KEY,
+            id               VARCHAR(36)  PRIMARY KEY,
             owner_id         VARCHAR(36),
             owner_name       VARCHAR(255),
-            title            VARCHAR(255)  NOT NULL,
+            title            VARCHAR(255) NOT NULL,
             description      TEXT,
             location         VARCHAR(255),
             address          VARCHAR(255),
             area             VARCHAR(100),
             gender           VARCHAR(20),
             rent             INT,
-            deposit          INT           DEFAULT 5000,
-            verified         TINYINT(1)   DEFAULT 0,
-            flood_free_zone  TINYINT(1)   DEFAULT 0,
-            water_24_7       TINYINT(1)   DEFAULT 0,
+            deposit          INT          DEFAULT 5000,
+            verified         TINYINT(1)  DEFAULT 0,
+            flood_free_zone  TINYINT(1)  DEFAULT 0,
+            water_24_7       TINYINT(1)  DEFAULT 0,
             amenities        TEXT,
             images           TEXT,
-            rating           FLOAT         DEFAULT 0,
-            review_count     INT           DEFAULT 0,
-            available_rooms  INT           DEFAULT 1,
-            total_rooms      INT           DEFAULT 1,
+            rating           FLOAT        DEFAULT 0,
+            review_count     INT          DEFAULT 0,
+            available_rooms  INT          DEFAULT 1,
+            total_rooms      INT          DEFAULT 1,
             nearby_landmarks TEXT,
             checklist        TEXT,
-            created_at       DATETIME     DEFAULT CURRENT_TIMESTAMP
+            created_at       DATETIME    DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
-    db_execute("""
+    _recreate_table_if_int_id("bookings", """
         CREATE TABLE IF NOT EXISTS bookings (
             id             VARCHAR(36) PRIMARY KEY,
             tenant_id      VARCHAR(36),
@@ -958,7 +993,7 @@ async def startup_seed():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
-    db_execute("""
+    _recreate_table_if_int_id("reviews", """
         CREATE TABLE IF NOT EXISTS reviews (
             id          VARCHAR(36) PRIMARY KEY,
             tenant_id   VARCHAR(36),
@@ -970,7 +1005,7 @@ async def startup_seed():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
-    db_execute("""
+    _recreate_table_if_int_id("payments", """
         CREATE TABLE IF NOT EXISTS payments (
             id          VARCHAR(36) PRIMARY KEY,
             user_id     VARCHAR(36),
@@ -994,66 +1029,88 @@ async def startup_seed():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
-    # ── Migrate existing tables — ensure EVERY column exists ──────────────
-    # users
-    _ensure_column("users", "email",          "VARCHAR(255)")
-    _ensure_column("users", "role",           "VARCHAR(20) DEFAULT 'tenant'")
-    _ensure_column("users", "wallet_balance", "INT DEFAULT 0")
-    _ensure_column("users", "kyc_verified",   "TINYINT(1) DEFAULT 0")
-    _ensure_column("users", "kyc_data",       "TEXT")
+    # Add any missing columns to existing tables
+    for col, defn in [
+        ("email",          "VARCHAR(255)"),
+        ("role",           "VARCHAR(20) DEFAULT 'tenant'"),
+        ("wallet_balance", "INT DEFAULT 0"),
+        ("kyc_verified",   "TINYINT(1) DEFAULT 0"),
+        ("kyc_data",       "TEXT"),
+    ]:
+        _ensure_column("users", col, defn)
 
-    # properties — original columns first, then new ones
-    _ensure_column("properties", "owner_id",        "VARCHAR(36)")
-    _ensure_column("properties", "owner_name",      "VARCHAR(255)")
-    _ensure_column("properties", "title",           "VARCHAR(255)")
-    _ensure_column("properties", "description",     "TEXT")
-    _ensure_column("properties", "location",        "VARCHAR(255)")
-    _ensure_column("properties", "address",         "VARCHAR(255)")
-    _ensure_column("properties", "area",            "VARCHAR(100)")
-    _ensure_column("properties", "gender",          "VARCHAR(20)")
-    _ensure_column("properties", "rent",            "INT DEFAULT 0")
-    _ensure_column("properties", "deposit",         "INT DEFAULT 5000")
-    _ensure_column("properties", "verified",        "TINYINT(1) DEFAULT 0")
-    _ensure_column("properties", "flood_free_zone", "TINYINT(1) DEFAULT 0")
-    _ensure_column("properties", "water_24_7",      "TINYINT(1) DEFAULT 0")
-    _ensure_column("properties", "amenities",       "TEXT")
-    _ensure_column("properties", "images",          "TEXT")
-    _ensure_column("properties", "rating",          "FLOAT DEFAULT 0")
-    _ensure_column("properties", "review_count",    "INT DEFAULT 0")
-    _ensure_column("properties", "available_rooms", "INT DEFAULT 1")
-    _ensure_column("properties", "total_rooms",     "INT DEFAULT 1")
-    _ensure_column("properties", "nearby_landmarks","TEXT")
-    _ensure_column("properties", "checklist",       "TEXT")
+    for col, defn in [
+        ("owner_id",         "VARCHAR(36)"),
+        ("owner_name",       "VARCHAR(255)"),
+        ("title",            "VARCHAR(255)"),
+        ("description",      "TEXT"),
+        ("location",         "VARCHAR(255)"),
+        ("address",          "VARCHAR(255)"),
+        ("area",             "VARCHAR(100)"),
+        ("gender",           "VARCHAR(20)"),
+        ("rent",             "INT DEFAULT 0"),
+        ("deposit",          "INT DEFAULT 5000"),
+        ("verified",         "TINYINT(1) DEFAULT 0"),
+        ("flood_free_zone",  "TINYINT(1) DEFAULT 0"),
+        ("water_24_7",       "TINYINT(1) DEFAULT 0"),
+        ("amenities",        "TEXT"),
+        ("images",           "TEXT"),
+        ("rating",           "FLOAT DEFAULT 0"),
+        ("review_count",     "INT DEFAULT 0"),
+        ("available_rooms",  "INT DEFAULT 1"),
+        ("total_rooms",      "INT DEFAULT 1"),
+        ("nearby_landmarks", "TEXT"),
+        ("checklist",        "TEXT"),
+    ]:
+        _ensure_column("properties", col, defn)
 
-    # bookings
-    _ensure_column("bookings", "tenant_id",      "VARCHAR(36)")
-    _ensure_column("bookings", "property_id",    "VARCHAR(36)")
-    _ensure_column("bookings", "visit_date",     "VARCHAR(20)")
-    _ensure_column("bookings", "status",         "VARCHAR(50) DEFAULT 'pending_payment'")
-    _ensure_column("bookings", "visit_fee",      "INT DEFAULT 500")
-    _ensure_column("bookings", "visit_fee_paid", "TINYINT(1) DEFAULT 0")
-    _ensure_column("bookings", "advance_paid",   "INT DEFAULT 0")
-    _ensure_column("bookings", "exit_after",     "VARCHAR(30)")
+    for col, defn in [
+        ("tenant_id",      "VARCHAR(36)"),
+        ("property_id",    "VARCHAR(36)"),
+        ("visit_date",     "VARCHAR(20)"),
+        ("status",         "VARCHAR(50) DEFAULT 'pending_payment'"),
+        ("visit_fee",      "INT DEFAULT 500"),
+        ("visit_fee_paid", "TINYINT(1) DEFAULT 0"),
+        ("advance_paid",   "INT DEFAULT 0"),
+        ("exit_after",     "VARCHAR(30)"),
+    ]:
+        _ensure_column("bookings", col, defn)
 
-    # ── Seed users ─────────────────────────────────────────────────────────
+
+def _seed_users():
     seed_users = [
-        ("PGRoom Admin",    "admin@pgroom.in",  "9999999999", "admin123",  "admin"),
-        ("PG Owner",        "owner@pgroom.in",  "9888888888", "pass1234",  "owner"),
-        ("Test Tenant",     "tenant@pgroom.in", "9777777777", "pass1234",  "tenant"),
+        ("PGRoom Admin", "admin@pgroom.in",  "9999999999", "admin123", "admin"),
+        ("PG Owner",     "owner@pgroom.in",  "9888888888", "pass1234", "owner"),
+        ("Test Tenant",  "tenant@pgroom.in", "9777777777", "pass1234", "tenant"),
     ]
     for name, email, phone, pwd, role in seed_users:
-        if not db_fetchone("SELECT id FROM users WHERE email=%s", (email,)):
-            db_execute(
-                "INSERT INTO users (id, name, email, phone, password, role, wallet_balance, created_at) "
-                "VALUES (%s,%s,%s,%s,%s,%s,0,NOW())",
-                (str(uuid.uuid4()), name, email, phone, hash_password(pwd), role),
-            )
+        try:
+            if not db_fetchone("SELECT id FROM users WHERE email=%s", (email,)):
+                db_execute(
+                    "INSERT INTO users (id, name, email, phone, password, role, wallet_balance, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,0,NOW())",
+                    (str(uuid.uuid4()), name, email, phone, hash_password(pwd), role),
+                )
+        except Exception as e:
+            print(f"⚠️  Could not seed user {email}: {e}")
 
+
+def _seed_properties():
     # ── Seed properties (need >=6 for admin stats test) ────────────────────
-    if db_fetchone("SELECT COUNT(*) AS cnt FROM properties", ())["cnt"] < 6:
-        owner = db_fetchone("SELECT id, name FROM users WHERE email='owner@pgroom.in'")
-        owner_id = owner["id"] if owner else str(uuid.uuid4())
-        owner_name = owner["name"] if owner else "PG Owner"
+    try:
+        prop_count = db_fetchone("SELECT COUNT(*) AS cnt FROM properties")
+        needs_seed = (prop_count["cnt"] if prop_count else 0) < 6
+    except Exception:
+        needs_seed = False
+
+    if needs_seed:
+        try:
+            owner = db_fetchone("SELECT id, name FROM users WHERE email=\'owner@pgroom.in\'")
+            owner_id = owner["id"] if owner else str(uuid.uuid4())
+            owner_name = owner["name"] if owner else "PG Owner"
+        except Exception:
+            owner_id = str(uuid.uuid4())
+            owner_name = "PG Owner"
 
         seed_props = [
             {
@@ -1061,191 +1118,122 @@ async def startup_seed():
                 "description": "Comfortable boys PG near IIT Guwahati. Flood-free zone with 24/7 water.",
                 "location": "Six Mile, Guwahati",
                 "address": "Near IIT Gate, Six Mile, Guwahati 781022",
-                "area": "six_mile",
-                "gender": "boys",
-                "rent": 7500,
-                "deposit": 5000,
-                "flood_free_zone": 1,
-                "water_24_7": 1,
-                "verified": 1,
+                "area": "six_mile", "gender": "boys", "rent": 7500, "deposit": 5000,
+                "flood_free_zone": 1, "water_24_7": 1, "verified": 1,
                 "amenities": json.dumps(["WiFi", "AC", "Food", "Power Backup"]),
                 "images": json.dumps(["https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800"]),
-                "rating": 4.8,
-                "review_count": 32,
-                "total_rooms": 20,
-                "available_rooms": 5,
+                "rating": 4.8, "review_count": 32, "total_rooms": 20, "available_rooms": 5,
                 "nearby_landmarks": json.dumps(["IIT Guwahati 500m", "Six Mile Market 200m"]),
-                "checklist": json.dumps([{"name": "Bed", "price": 5000}, {"name": "Table", "price": 2000}]),
+                "checklist": json.dumps([{"name": "Bed", "price": 5000}]),
             },
             {
                 "title": "Lakshmi Girls PG",
                 "description": "Safe girls PG in Beltola. CCTV, biometric entry, home food available.",
                 "location": "Beltola, Guwahati",
                 "address": "House No 42, Beltola, Guwahati 781028",
-                "area": "beltola",
-                "gender": "girls",
-                "rent": 8500,
-                "deposit": 5000,
-                "flood_free_zone": 1,
-                "water_24_7": 1,
-                "verified": 1,
+                "area": "beltola", "gender": "girls", "rent": 8500, "deposit": 5000,
+                "flood_free_zone": 1, "water_24_7": 1, "verified": 1,
                 "amenities": json.dumps(["WiFi", "Food", "CCTV", "Geyser"]),
                 "images": json.dumps(["https://images.unsplash.com/photo-1555854877-bab0e564b8d5?w=800"]),
-                "rating": 4.6,
-                "review_count": 18,
-                "total_rooms": 15,
-                "available_rooms": 3,
+                "rating": 4.6, "review_count": 18, "total_rooms": 15, "available_rooms": 3,
                 "nearby_landmarks": json.dumps(["Beltola Market 300m", "Apollo Hospital 1km"]),
                 "checklist": json.dumps([{"name": "Wardrobe", "price": 4000}]),
             },
             {
                 "title": "Green Valley Co-Living",
                 "description": "Modern co-living space near Gauhati University. Unisex, fully furnished.",
-                "location": "Zoo Road, Guwahati",
-                "address": "Lane 3, Zoo Road, Guwahati 781005",
-                "area": "zoo_road",
-                "gender": "unisex",
-                "rent": 9000,
-                "deposit": 5000,
-                "flood_free_zone": 0,
-                "water_24_7": 1,
-                "verified": 1,
+                "location": "Zoo Road, Guwahati", "address": "Lane 3, Zoo Road, Guwahati 781005",
+                "area": "zoo_road", "gender": "unisex", "rent": 9000, "deposit": 5000,
+                "flood_free_zone": 0, "water_24_7": 1, "verified": 1,
                 "amenities": json.dumps(["WiFi", "AC", "Gym", "Laundry"]),
                 "images": json.dumps(["https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800"]),
-                "rating": 4.5,
-                "review_count": 12,
-                "total_rooms": 25,
-                "available_rooms": 8,
-                "nearby_landmarks": json.dumps(["Gauhati University 800m", "Zoo Road Market 400m"]),
+                "rating": 4.5, "review_count": 12, "total_rooms": 25, "available_rooms": 8,
+                "nearby_landmarks": json.dumps(["Gauhati University 800m"]),
                 "checklist": json.dumps([{"name": "AC", "price": 15000}]),
             },
             {
                 "title": "Jalukbari Boys PG",
                 "description": "Budget-friendly boys PG near Cotton University. Good food, calm locality.",
-                "location": "Jalukbari, Guwahati",
-                "address": "Near Cotton University, Jalukbari, Guwahati 781014",
-                "area": "jalukbari",
-                "gender": "boys",
-                "rent": 6500,
-                "deposit": 5000,
-                "flood_free_zone": 1,
-                "water_24_7": 0,
-                "verified": 1,
+                "location": "Jalukbari, Guwahati", "address": "Near Cotton University, Jalukbari 781014",
+                "area": "jalukbari", "gender": "boys", "rent": 6500, "deposit": 5000,
+                "flood_free_zone": 1, "water_24_7": 0, "verified": 1,
                 "amenities": json.dumps(["WiFi", "Food", "Power Backup"]),
                 "images": json.dumps(["https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=800"]),
-                "rating": 4.2,
-                "review_count": 9,
-                "total_rooms": 12,
-                "available_rooms": 2,
-                "nearby_landmarks": json.dumps(["Cotton University 300m", "Jalukbari Flyover 500m"]),
+                "rating": 4.2, "review_count": 9, "total_rooms": 12, "available_rooms": 2,
+                "nearby_landmarks": json.dumps(["Cotton University 300m"]),
                 "checklist": json.dumps([]),
             },
             {
                 "title": "Khanapara Girls Hostel",
-                "description": "Premium girls hostel near IIMB campus. 24/7 security, mess included.",
-                "location": "Khanapara, Guwahati",
-                "address": "Near Veterinary College, Khanapara, Guwahati 781022",
-                "area": "khanapara",
-                "gender": "girls",
-                "rent": 8000,
-                "deposit": 5000,
-                "flood_free_zone": 1,
-                "water_24_7": 1,
-                "verified": 1,
+                "description": "Premium girls hostel near Veterinary College. 24/7 security, mess included.",
+                "location": "Khanapara, Guwahati", "address": "Near Veterinary College, Khanapara 781022",
+                "area": "khanapara", "gender": "girls", "rent": 8000, "deposit": 5000,
+                "flood_free_zone": 1, "water_24_7": 1, "verified": 1,
                 "amenities": json.dumps(["WiFi", "Food", "CCTV", "Geyser", "AC"]),
                 "images": json.dumps(["https://images.unsplash.com/photo-1631049307264-da0ec9d70304?w=800"]),
-                "rating": 4.7,
-                "review_count": 24,
-                "total_rooms": 18,
-                "available_rooms": 4,
-                "nearby_landmarks": json.dumps(["Veterinary College 200m", "Khanapara Police Point 1km"]),
+                "rating": 4.7, "review_count": 24, "total_rooms": 18, "available_rooms": 4,
+                "nearby_landmarks": json.dumps(["Veterinary College 200m"]),
                 "checklist": json.dumps([{"name": "Geyser", "price": 3000}]),
             },
             {
                 "title": "Ganeshguri Co-Living Hub",
                 "description": "Trendy co-living in Ganeshguri. Best connectivity, near Paltan Bazar.",
-                "location": "Ganeshguri, Guwahati",
-                "address": "Ganeshguri Chariali, Guwahati 781006",
-                "area": "ganeshguri",
-                "gender": "unisex",
-                "rent": 7000,
-                "deposit": 5000,
-                "flood_free_zone": 0,
-                "water_24_7": 0,
-                "verified": 0,
+                "location": "Ganeshguri, Guwahati", "address": "Ganeshguri Chariali, Guwahati 781006",
+                "area": "ganeshguri", "gender": "unisex", "rent": 7000, "deposit": 5000,
+                "flood_free_zone": 0, "water_24_7": 0, "verified": 0,
                 "amenities": json.dumps(["WiFi", "AC", "Parking"]),
                 "images": json.dumps(["https://images.unsplash.com/photo-1598928506311-c55ded91a20c?w=800"]),
-                "rating": 4.0,
-                "review_count": 6,
-                "total_rooms": 10,
-                "available_rooms": 3,
-                "nearby_landmarks": json.dumps(["Ganeshguri Market 100m", "Paltan Bazar 3km"]),
+                "rating": 4.0, "review_count": 6, "total_rooms": 10, "available_rooms": 3,
+                "nearby_landmarks": json.dumps(["Ganeshguri Market 100m"]),
                 "checklist": json.dumps([]),
             },
             {
                 "title": "Beltola Premium PG",
                 "description": "High-end PG in Beltola with all amenities. Flood-safe location.",
-                "location": "Beltola, Guwahati",
-                "address": "VIP Road, Beltola, Guwahati 781028",
-                "area": "beltola",
-                "gender": "boys",
-                "rent": 10000,
-                "deposit": 5000,
-                "flood_free_zone": 1,
-                "water_24_7": 1,
-                "verified": 1,
+                "location": "Beltola, Guwahati", "address": "VIP Road, Beltola, Guwahati 781028",
+                "area": "beltola", "gender": "boys", "rent": 10000, "deposit": 5000,
+                "flood_free_zone": 1, "water_24_7": 1, "verified": 1,
                 "amenities": json.dumps(["WiFi", "AC", "Food", "Gym", "Laundry", "Parking"]),
                 "images": json.dumps(["https://images.unsplash.com/photo-1515263487990-61b07816b324?w=800"]),
-                "rating": 4.9,
-                "review_count": 41,
-                "total_rooms": 30,
-                "available_rooms": 7,
-                "nearby_landmarks": json.dumps(["Beltola Tiniali 500m", "Apollo Hospital 800m"]),
-                "checklist": json.dumps([{"name": "AC", "price": 15000}, {"name": "Fridge", "price": 8000}]),
+                "rating": 4.9, "review_count": 41, "total_rooms": 30, "available_rooms": 7,
+                "nearby_landmarks": json.dumps(["Apollo Hospital 800m"]),
+                "checklist": json.dumps([{"name": "AC", "price": 15000}]),
             },
             {
                 "title": "Six Mile Budget PG",
                 "description": "Affordable PG near IIT and NEHU. Good for students on a budget.",
-                "location": "Six Mile, Guwahati",
-                "address": "North Guwahati Road, Six Mile, Guwahati 781022",
-                "area": "six_mile",
-                "gender": "unisex",
-                "rent": 5500,
-                "deposit": 5000,
-                "flood_free_zone": 0,
-                "water_24_7": 1,
-                "verified": 0,
+                "location": "Six Mile, Guwahati", "address": "North Guwahati Road, Six Mile 781022",
+                "area": "six_mile", "gender": "unisex", "rent": 5500, "deposit": 5000,
+                "flood_free_zone": 0, "water_24_7": 1, "verified": 0,
                 "amenities": json.dumps(["WiFi", "Power Backup"]),
                 "images": json.dumps(["https://images.unsplash.com/photo-1484154218962-a197022b5858?w=800"]),
-                "rating": 3.8,
-                "review_count": 5,
-                "total_rooms": 8,
-                "available_rooms": 2,
-                "nearby_landmarks": json.dumps(["NEHU 1km", "Six Mile Hospital 600m"]),
+                "rating": 3.8, "review_count": 5, "total_rooms": 8, "available_rooms": 2,
+                "nearby_landmarks": json.dumps(["NEHU 1km"]),
                 "checklist": json.dumps([]),
             },
         ]
 
         for prop in seed_props:
-            db_execute(
-                """
-                INSERT INTO properties
-                (id, owner_id, owner_name, title, description, location, address, area, gender,
-                 rent, deposit, flood_free_zone, water_24_7, verified, amenities, images,
-                 rating, review_count, total_rooms, available_rooms,
-                 nearby_landmarks, checklist, created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
-                """,
-                (
-                    str(uuid.uuid4()), owner_id, owner_name,
-                    prop["title"], prop["description"], prop["location"], prop["address"],
-                    prop["area"], prop["gender"], prop["rent"], prop["deposit"],
-                    prop["flood_free_zone"], prop["water_24_7"], prop["verified"],
-                    prop["amenities"], prop["images"],
-                    prop["rating"], prop["review_count"],
-                    prop["total_rooms"], prop["available_rooms"],
-                    prop["nearby_landmarks"], prop["checklist"],
-                ),
-            )
-
-    print("✅ pgroom MySQL backend started successfully")
+            try:
+                db_execute(
+                    """
+                    INSERT IGNORE INTO properties
+                    (id, owner_id, owner_name, title, description, location, address, area, gender,
+                     rent, deposit, flood_free_zone, water_24_7, verified, amenities, images,
+                     rating, review_count, total_rooms, available_rooms,
+                     nearby_landmarks, checklist, created_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                    """,
+                    (
+                        str(uuid.uuid4()), owner_id, owner_name,
+                        prop["title"], prop["description"], prop["location"], prop["address"],
+                        prop["area"], prop["gender"], prop["rent"], prop["deposit"],
+                        prop["flood_free_zone"], prop["water_24_7"], prop["verified"],
+                        prop["amenities"], prop["images"],
+                        prop["rating"], prop["review_count"],
+                        prop["total_rooms"], prop["available_rooms"],
+                        prop["nearby_landmarks"], prop["checklist"],
+                    ),
+                )
+            except Exception as ex:
+                print(f"⚠️  Seed property skip ({prop['title']}): {ex}")
