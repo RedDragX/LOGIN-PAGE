@@ -49,6 +49,9 @@ class LoginIn(BaseModel):
     email: EmailStr
     password: str
 
+class OTPRequest(BaseModel):
+    phone: str
+
 class PropertyIn(BaseModel):
     title: str
     description: str
@@ -188,7 +191,61 @@ async def login(payload: LoginIn):
             "role": user["role"]
         }
     }
+@app.post("/api/auth/otp/login/send")
+async def otp_login_send(payload: OTPRequest):
 
+    with conn.cursor() as cursor:
+
+        cursor.execute(
+            "SELECT * FROM users WHERE phone=%s",
+            (payload.phone,)
+        )
+
+        user = cursor.fetchone()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Mobile not registered")
+
+    otp = "123456"
+
+    return {
+        "message": "OTP sent",
+        "otp": otp
+    }
+
+
+@app.post("/api/auth/otp/login/verify")
+async def otp_login_verify(payload: dict):
+
+    phone = payload.get("phone")
+    otp = payload.get("otp")
+
+    if otp != "123456":
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    with conn.cursor() as cursor:
+
+        cursor.execute(
+            "SELECT * FROM users WHERE phone=%s",
+            (phone,)
+        )
+
+        user = cursor.fetchone()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    token = create_token(user["id"], user["role"])
+
+    return {
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"]
+        }
+    }
 
 @app.get("/api/auth/me")
 async def me(user=Depends(get_current_user)):
