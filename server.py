@@ -252,28 +252,28 @@ async def otp_login_send(payload: OTPRequest):
         ]
     }
 
- try:
+    try:
 
-    response = requests.post(
-        "https://control.msg91.com/api/v5/flow",
-        json=data,
-        headers=headers
-    )
+        response = requests.post(
+            "https://control.msg91.com/api/v5/flow",
+            json=data,
+            headers=headers
+        )
 
-    print(response.text)
+        print(response.text)
 
-except Exception as e:
+    except Exception as e:
 
-    print(str(e))
+        print(str(e))
 
-    raise HTTPException(
-        status_code=500,
-        detail=str(e)
-    )
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
     return {
         "message": "OTP sent successfully"
     }
-
 
 @app.post("/api/auth/otp/login/verify")
 async def otp_login_verify(payload: dict):
