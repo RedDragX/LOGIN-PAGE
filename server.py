@@ -31,10 +31,10 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "secret")
 JWT_ALGORITHM = "HS256"
 
 conn = pymysql.connect(
-    host=os.environ["DB_HOST"],
-    user=os.environ["DB_USER"],
-    password=os.environ["DB_PASSWORD"],
-    database=os.environ["DB_NAME"],
+    host=os.environ["srv1258.hstgr.io"],
+    user=os.environ["u290914486_pgroom_user"],
+    password=os.environ["Jupitereventcom@server1"],
+    database=os.environ["u290914486_pgroom_db"],
     cursorclass=DictCursor,
     autocommit=True
 )
