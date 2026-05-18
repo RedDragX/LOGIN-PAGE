@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 import pymysql
 from pymysql.cursors import DictCursor
 import os
-import uuid
+import uuid 
 import jwt
 import bcrypt
 from datetime import datetime, timedelta
