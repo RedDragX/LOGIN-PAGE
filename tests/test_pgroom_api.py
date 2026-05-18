@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 import pytest
 import requests
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://pgroom-rental.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get(
+    "REACT_APP_BACKEND_URL",
+    "https://pgroom-rental.preview.emergentagent.com"
+).rstrip("/")
 
 
 # ---------- Auth ----------
@@ -23,15 +26,26 @@ class TestAuth:
         assert tenant_auth["user"]["role"] == "tenant"
 
     def test_login_invalid(self, api_client):
-        r = api_client.post(f"{BASE_URL}/api/auth/login", json={"email": "admin@pgroom.in", "password": "wrong"})
+        r = api_client.post(
+            f"{BASE_URL}/api/auth/login",
+            json={"email": "admin@pgroom.in", "password": "wrong"},
+        )
         assert r.status_code == 401
 
     def test_register_new_tenant(self, api_client):
+        # Phone is randomised so this test is idempotent across runs
         email = f"TEST_{uuid.uuid4().hex[:8]}@example.com"
-        r = api_client.post(f"{BASE_URL}/api/auth/register", json={
-            "name": "Test Tenant", "email": email, "phone": "9000000001",
-            "password": "pass1234", "role": "tenant"
-        })
+        phone = str(random_10_digit())
+        r = api_client.post(
+            f"{BASE_URL}/api/auth/register",
+            json={
+                "name": "Test Tenant",
+                "email": email,
+                "phone": phone,
+                "password": "pass1234",
+                "role": "tenant",
+            },
+        )
         assert r.status_code == 200, r.text
         d = r.json()
         assert "token" in d and d["user"]["email"] == email
@@ -39,10 +53,16 @@ class TestAuth:
         assert "password" not in d["user"]
 
     def test_register_duplicate(self, api_client):
-        r = api_client.post(f"{BASE_URL}/api/auth/register", json={
-            "name": "X", "email": "admin@pgroom.in", "phone": "9000000002",
-            "password": "pass1234", "role": "tenant"
-        })
+        r = api_client.post(
+            f"{BASE_URL}/api/auth/register",
+            json={
+                "name": "X",
+                "email": "admin@pgroom.in",
+                "phone": "9000000002",
+                "password": "pass1234",
+                "role": "tenant",
+            },
+        )
         assert r.status_code == 400
 
     def test_auth_me(self, tenant_client):
@@ -61,26 +81,38 @@ class TestAuth:
         d = r.json()
         assert "otp" in d and len(d["otp"]) == 6
         otp = d["otp"]
-        v = tenant_client.post(f"{BASE_URL}/api/auth/otp/verify", json={"phone": phone, "otp": otp})
+        v = tenant_client.post(
+            f"{BASE_URL}/api/auth/otp/verify", json={"phone": phone, "otp": otp}
+        )
         assert v.status_code == 200
 
     def test_otp_verify_invalid(self, tenant_client):
         phone = "9123456780"
         tenant_client.post(f"{BASE_URL}/api/auth/otp/send", json={"phone": phone})
-        v = tenant_client.post(f"{BASE_URL}/api/auth/otp/verify", json={"phone": phone, "otp": "000000"})
+        v = tenant_client.post(
+            f"{BASE_URL}/api/auth/otp/verify", json={"phone": phone, "otp": "000000"}
+        )
         assert v.status_code == 400
 
     def test_kyc_valid(self, tenant_client):
-        r = tenant_client.post(f"{BASE_URL}/api/auth/kyc", json={
-            "pan": "ABCDE1234F", "aadhaar": "123456789012",
-            "emergency_contact_name": "Mom", "emergency_contact_phone": "9000000003",
-            "emergency_contact_relation": "Mother",
-        })
+        r = tenant_client.post(
+            f"{BASE_URL}/api/auth/kyc",
+            json={
+                "pan": "ABCDE1234F",
+                "aadhaar": "123456789012",
+                "emergency_contact_name": "Mom",
+                "emergency_contact_phone": "9000000003",
+                "emergency_contact_relation": "Mother",
+            },
+        )
         assert r.status_code == 200, r.text
         assert r.json()["verified"] is True
 
     def test_kyc_invalid_pan(self, tenant_client):
-        r = tenant_client.post(f"{BASE_URL}/api/auth/kyc", json={"pan": "INVALID", "aadhaar": "123456789012"})
+        r = tenant_client.post(
+            f"{BASE_URL}/api/auth/kyc",
+            json={"pan": "INVALID", "aadhaar": "123456789012"},
+        )
         assert r.status_code == 200
         assert r.json()["verified"] is False
 
@@ -120,7 +152,9 @@ class TestProperties:
         assert all(i["water_24_7"] is True for i in r.json())
 
     def test_filter_rent_range(self, api_client):
-        r = api_client.get(f"{BASE_URL}/api/properties", params={"min_rent": 7000, "max_rent": 9000})
+        r = api_client.get(
+            f"{BASE_URL}/api/properties", params={"min_rent": 7000, "max_rent": 9000}
+        )
         assert r.status_code == 200
         for i in r.json():
             assert 7000 <= i["rent"] <= 9000
@@ -145,9 +179,15 @@ class TestProperties:
     def test_owner_create_property(self, owner_client):
         payload = {
             "title": "TEST_Owner_Property",
-            "description": "Test created", "location": "Guwahati", "address": "Test addr",
-            "area": "other", "gender": "unisex", "rent": 6000, "deposit": 5000,
-            "amenities": ["WiFi"], "images": [],
+            "description": "Test created",
+            "location": "Guwahati",
+            "address": "Test addr",
+            "area": "other",
+            "gender": "unisex",
+            "rent": 6000,
+            "deposit": 5000,
+            "amenities": ["WiFi"],
+            "images": [],
         }
         r = owner_client.post(f"{BASE_URL}/api/properties", json=payload)
         assert r.status_code == 200, r.text
@@ -161,8 +201,13 @@ class TestProperties:
 
     def test_tenant_cannot_create_property(self, tenant_client):
         payload = {
-            "title": "TEST_Bad", "description": "x", "location": "x", "address": "x",
-            "area": "other", "gender": "unisex", "rent": 1000,
+            "title": "TEST_Bad",
+            "description": "x",
+            "location": "x",
+            "address": "x",
+            "area": "other",
+            "gender": "unisex",
+            "rent": 1000,
         }
         r = tenant_client.post(f"{BASE_URL}/api/properties", json=payload)
         assert r.status_code == 403
@@ -172,11 +217,19 @@ class TestProperties:
 class TestBookingFlow:
     @pytest.fixture(scope="class")
     def fresh_tenant(self):
+        # Phone randomised to avoid duplicate failures on re-runs
         email = f"TEST_tenant_{uuid.uuid4().hex[:8]}@example.com"
-        r = requests.post(f"{BASE_URL}/api/auth/register", json={
-            "name": "Booking Tenant", "email": email, "phone": "9000000099",
-            "password": "pass1234", "role": "tenant"
-        })
+        phone = str(random_10_digit())
+        r = requests.post(
+            f"{BASE_URL}/api/auth/register",
+            json={
+                "name": "Booking Tenant",
+                "email": email,
+                "phone": phone,
+                "password": "pass1234",
+                "role": "tenant",
+            },
+        )
         assert r.status_code == 200, r.text
         d = r.json()
         return {"token": d["token"], "user": d["user"], "email": email}
@@ -184,7 +237,10 @@ class TestBookingFlow:
     @pytest.fixture(scope="class")
     def fresh_tenant_client(self, fresh_tenant):
         s = requests.Session()
-        s.headers.update({"Content-Type": "application/json", "Authorization": f"Bearer {fresh_tenant['token']}"})
+        s.headers.update({
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {fresh_tenant['token']}",
+        })
         return s
 
     @pytest.fixture(scope="class")
@@ -193,9 +249,10 @@ class TestBookingFlow:
         return r.json()[0]["id"]
 
     def test_create_booking(self, fresh_tenant_client, property_id):
-        r = fresh_tenant_client.post(f"{BASE_URL}/api/bookings", json={
-            "property_id": property_id, "visit_date": "2026-02-15"
-        })
+        r = fresh_tenant_client.post(
+            f"{BASE_URL}/api/bookings",
+            json={"property_id": property_id, "visit_date": "2026-02-15"},
+        )
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["status"] == "pending_payment"
@@ -213,13 +270,16 @@ class TestBookingFlow:
         assert b["status"] == "scheduled" and b["visit_fee_paid"] is True
 
     def test_owner_cannot_book(self, owner_client, property_id):
-        r = owner_client.post(f"{BASE_URL}/api/bookings", json={
-            "property_id": property_id, "visit_date": "2026-02-15"
-        })
+        r = owner_client.post(
+            f"{BASE_URL}/api/bookings",
+            json={"property_id": property_id, "visit_date": "2026-02-15"},
+        )
         assert r.status_code == 403
 
     def test_wallet_recharge(self, fresh_tenant_client):
-        r = fresh_tenant_client.post(f"{BASE_URL}/api/wallet/recharge", json={"amount": 5000})
+        r = fresh_tenant_client.post(
+            f"{BASE_URL}/api/wallet/recharge", json={"amount": 5000}
+        )
         assert r.status_code == 200
         assert r.json()["wallet_balance"] >= 5000
 
@@ -231,15 +291,16 @@ class TestBookingFlow:
         b = next(x for x in bookings if x["id"] == bid)
         assert b["status"] == "moved_in"
         assert b["advance_paid"] == 5000
-        # wallet should have been deducted
+        # Wallet should have been deducted to 0
         me = fresh_tenant_client.get(f"{BASE_URL}/api/auth/me").json()
         assert me["wallet_balance"] == 0
 
     def test_move_in_insufficient(self, fresh_tenant_client, property_id):
-        # New booking, no recharge
-        r1 = fresh_tenant_client.post(f"{BASE_URL}/api/bookings", json={
-            "property_id": property_id, "visit_date": "2026-03-15"
-        })
+        # New booking, wallet is 0 — move-in should fail
+        r1 = fresh_tenant_client.post(
+            f"{BASE_URL}/api/bookings",
+            json={"property_id": property_id, "visit_date": "2026-03-15"},
+        )
         bid = r1.json()["id"]
         r = fresh_tenant_client.post(f"{BASE_URL}/api/bookings/{bid}/move-in")
         assert r.status_code == 400
@@ -250,11 +311,14 @@ class TestBookingFlow:
         today = datetime.now(timezone.utc).day
         penalty = (today - 8) * 500 if today > 8 else 0
         need = prop["rent"] + penalty
-        rr = fresh_tenant_client.post(f"{BASE_URL}/api/wallet/recharge", json={"amount": need})
+        rr = fresh_tenant_client.post(
+            f"{BASE_URL}/api/wallet/recharge", json={"amount": need}
+        )
         assert rr.status_code == 200
-        r = fresh_tenant_client.post(f"{BASE_URL}/api/rent/pay", json={
-            "property_id": property_id, "month": "2026-01"
-        })
+        r = fresh_tenant_client.post(
+            f"{BASE_URL}/api/rent/pay",
+            json={"property_id": property_id, "month": "2026-01"},
+        )
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["total"] == need
@@ -281,9 +345,10 @@ class TestReviews:
     def test_add_review_updates_rating(self, tenant_client):
         items = requests.get(f"{BASE_URL}/api/properties").json()
         pid = items[0]["id"]
-        r = tenant_client.post(f"{BASE_URL}/api/reviews", json={
-            "property_id": pid, "rating": 5, "comment": "TEST_Great place"
-        })
+        r = tenant_client.post(
+            f"{BASE_URL}/api/reviews",
+            json={"property_id": pid, "rating": 5, "comment": "TEST_Great place"},
+        )
         assert r.status_code == 200, r.text
         # Verify rating updated
         prop = requests.get(f"{BASE_URL}/api/properties/{pid}").json()
@@ -292,9 +357,10 @@ class TestReviews:
 
     def test_owner_cannot_review(self, owner_client):
         items = requests.get(f"{BASE_URL}/api/properties").json()
-        r = owner_client.post(f"{BASE_URL}/api/reviews", json={
-            "property_id": items[0]["id"], "rating": 4, "comment": "bad"
-        })
+        r = owner_client.post(
+            f"{BASE_URL}/api/reviews",
+            json={"property_id": items[0]["id"], "rating": 4, "comment": "bad"},
+        )
         assert r.status_code == 403
 
 
@@ -305,7 +371,7 @@ class TestAdmin:
         assert r.status_code == 200
         d = r.json()
         for k in ["users", "properties", "bookings", "revenue", "revenue_by_type", "payments_count"]:
-            assert k in d
+            assert k in d, f"Missing key: {k}"
         assert d["users"] >= 3 and d["properties"] >= 6
 
     def test_admin_stats_forbidden_for_tenant(self, tenant_client):
@@ -317,10 +383,14 @@ class TestAdmin:
         assert r.status_code == 403
 
     def test_admin_verify_property(self, admin_client, owner_client):
-        # Create property via owner first
         payload = {
-            "title": "TEST_VerifyMe", "description": "v", "location": "g", "address": "a",
-            "area": "other", "gender": "unisex", "rent": 5000,
+            "title": "TEST_VerifyMe",
+            "description": "v",
+            "location": "g",
+            "address": "a",
+            "area": "other",
+            "gender": "unisex",
+            "rent": 5000,
         }
         cp = owner_client.post(f"{BASE_URL}/api/properties", json=payload).json()
         pid = cp["id"]
@@ -342,3 +412,19 @@ class TestAdmin:
         for u in users:
             assert "password" not in u
             assert "_id" not in u
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def random_10_digit() -> int:
+    """Return a random 10-digit number suitable for use as an Indian mobile number."""
+    return random_phone_int()
+
+
+import random as _random
+
+def random_phone_int() -> int:
+    # Start with 7-9 to look like an Indian number, avoid clashing with seed phones
+    first = _random.choice([7, 8, 9])
+    rest = _random.randint(100000000, 999999999)
+    return int(f"{first}{rest}")
