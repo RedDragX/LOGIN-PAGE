@@ -197,7 +197,113 @@ async def login(payload: LoginIn):
 async def me(user=Depends(get_current_user)):
     return user
 
+@app.post("/api/auth/otp/login/send")
+async def otp_login_send(payload: OTPRequest):
 
+    with conn.cursor() as cursor:
+
+        cursor.execute(
+            "SELECT * FROM users WHERE phone=%s",
+            (payload.phone,)
+        )
+
+        user = cursor.fetchone()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Mobile not registered")
+
+    otp = str(random.randint(1000, 9999))
+
+    with conn.cursor() as cursor:
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS otp_codes (
+                phone VARCHAR(20),
+                otp VARCHAR(10)
+            )
+            """
+        )
+
+        cursor.execute(
+            "DELETE FROM otp_codes WHERE phone=%s",
+            (payload.phone,)
+        )
+
+        cursor.execute(
+            "INSERT INTO otp_codes (phone, otp) VALUES (%s,%s)",
+            (payload.phone, otp)
+        )
+
+    headers = {
+        "accept": "application/json",
+        "authkey": "502981Axv013Fima69c64a7cP1",
+        "content-type": "application/json"
+    }
+
+    data = {
+        "template_id": "69c611a05aca2199ae0e0dd2",
+        "recipients": [
+            {
+                "mobiles": f"91{payload.phone}",
+                "var1": user["name"],
+                "var2": otp
+            }
+        ]
+    }
+
+    requests.post(
+        "https://control.msg91.com/api/v5/flow",
+        json=data,
+        headers=headers
+    )
+
+    return {
+        "message": "OTP sent successfully"
+    }
+
+
+@app.post("/api/auth/otp/login/verify")
+async def otp_login_verify(payload: dict):
+
+    phone = payload.get("phone")
+    otp = payload.get("otp")
+
+    with conn.cursor() as cursor:
+
+        cursor.execute(
+            "SELECT * FROM otp_codes WHERE phone=%s AND otp=%s",
+            (phone, otp)
+        )
+
+        otp_data = cursor.fetchone()
+
+    if not otp_data:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    with conn.cursor() as cursor:
+
+        cursor.execute(
+            "SELECT * FROM users WHERE phone=%s",
+            (phone,)
+        )
+
+        user = cursor.fetchone()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    token = create_token(user["id"], user["role"])
+
+    return {
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"]
+        }
+    }
 @app.get("/api/properties")
 async def get_properties():
 
