@@ -193,7 +193,6 @@ async def login(payload: LoginIn):
             "role": user["role"]
         }
     }
-did i asked replace ? sent me whole code 
 @app.get("/api/auth/me")
 async def me(user=Depends(get_current_user)):
     return user
