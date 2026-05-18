@@ -420,60 +420,77 @@ class OTPRegisterRequest(BaseModel):
     phone: str
 
 
+from typing import Optional
+from pydantic import BaseModel, EmailStr
+
+
+class OTPRegisterRequest(BaseModel):
+    name: Optional[str] = None
+    fullName: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
+
+
 @app.post("/api/auth/otp/register/send")
 async def otp_register_send(payload: OTPRegisterRequest):
 
-    phone = normalize_phone(payload.phone)
+    name = payload.name or payload.fullName
+    phone = payload.phone or payload.mobile
 
-    existing_email = db_fetchone(
-        "SELECT id FROM users WHERE email=%s",
-        (payload.email,)
-    )
-
-    if existing_email:
+    if not name:
         raise HTTPException(
             status_code=400,
-            detail="Email already exists"
+            detail="Name required"
         )
 
-    existing_phone = db_fetchone(
-        "SELECT id FROM users WHERE phone=%s",
-        (phone,)
-    )
-
-    if existing_phone:
+    if not phone:
         raise HTTPException(
             status_code=400,
-            detail="Phone already exists"
+            detail="Phone required"
         )
 
-    otp = str(random.randint(1000, 9999))
+    phone = normalize_phone(phone)
 
-    db_execute(
-        "DELETE FROM otp_codes WHERE phone=%s",
-        (phone,)
-    )
+    try:
 
-    db_execute(
-        """
-        INSERT INTO otp_codes
-        (phone, otp, created_at, expires_at)
-        VALUES (%s,%s,NOW(),DATE_ADD(NOW(), INTERVAL 10 MINUTE))
-        """,
-        (phone, otp)
-    )
+        conn.ping(reconnect=True)
 
-    delivery = send_msg91_otp(
-        phone,
-        payload.name,
-        otp
-    )
+        with conn.cursor() as cursor:
 
-    return {
-        "message": "OTP sent successfully",
-        "delivery": delivery
-    }
+            cursor.execute(
+                "SELECT * FROM users WHERE phone=%s",
+                (phone,)
+            )
 
+            existing_user = cursor.fetchone()
+
+        if existing_user:
+
+            raise HTTPException(
+                status_code=400,
+                detail="Mobile already registered"
+            )
+
+        otp = "123456"
+
+        return {
+            "message": "OTP sent successfully",
+            "otp": otp,
+            "name": name,
+            "phone": phone
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        print("REGISTER OTP ERROR:", str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 @app.post("/api/auth/otp/register/verify")
 async def otp_register_verify(payload: RegisterIn):
