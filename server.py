@@ -414,8 +414,14 @@ async def otp_login_verify(payload: OTPVerifyRequest):
         },
     }
 
+class OTPRegisterRequest(BaseModel):
+    name: str
+    email: Optional[EmailStr] = None
+    phone: str
+
+
 @app.post("/api/auth/otp/register/send")
-async def otp_register_send(payload: RegisterIn):
+async def otp_register_send(payload: OTPRegisterRequest):
 
     phone = normalize_phone(payload.phone)
 
