@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
@@ -7,7 +6,7 @@ from dotenv import load_dotenv
 import pymysql
 from pymysql.cursors import DictCursor
 import os
-import uuid 
+import uuid
 import random
 import requests
 import jwt
@@ -16,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
 app = FastAPI(title="pgroom API")
 
@@ -40,6 +39,7 @@ conn = pymysql.connect(
     autocommit=True
 )
 
+
 class RegisterIn(BaseModel):
     name: str
     email: EmailStr
@@ -47,12 +47,20 @@ class RegisterIn(BaseModel):
     password: str
     role: str = "tenant"
 
+
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
 
+
 class OTPRequest(BaseModel):
     phone: str
+
+
+class OTPVerifyRequest(BaseModel):
+    phone: str
+    otp: str
+
 
 class PropertyIn(BaseModel):
     title: str
@@ -63,6 +71,7 @@ class PropertyIn(BaseModel):
     gender: str
     rent: int
     deposit: int = 5000
+
 
 class BookingIn(BaseModel):
     property_id: str
@@ -83,33 +92,60 @@ def create_token(user_id: str, role: str):
         "role": role,
         "exp": datetime.utcnow() + timedelta(days=7)
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    return jwt.encode(
+        payload,
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM
+    )
 
 
 def decode_token(token: str):
-    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    return jwt.decode(
+        token,
+        JWT_SECRET,
+        algorithms=[JWT_ALGORITHM]
+    )
 
 
-async def get_current_user(authorization: Optional[str] = Header(None)):
+async def get_current_user(
+    authorization: Optional[str] = Header(None)
+):
     if not authorization:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized"
+        )
 
     token = authorization.replace("Bearer ", "")
 
     try:
         payload = decode_token(token)
-    except:
-        raise HTTPException(status_code=401, detail="Invalid token")
+
+    except Exception:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token"
+        )
 
     with conn.cursor() as cursor:
+
         cursor.execute(
-            "SELECT id,name,email,phone,role,wallet_balance FROM users WHERE id=%s",
+            """
+            SELECT id,name,email,phone,role,wallet_balance
+            FROM users
+            WHERE id=%s
+            """,
             (payload["sub"],)
         )
+
         user = cursor.fetchone()
 
     if not user:
-        raise HTTPException(status_code=401, detail="User not found")
+        raise HTTPException(
+            status_code=401,
+            detail="User not found"
+        )
 
     return user
 
@@ -135,14 +171,26 @@ async def register(payload: RegisterIn):
         existing = cursor.fetchone()
 
         if existing:
-            raise HTTPException(status_code=400, detail="Email already exists")
+            raise HTTPException(
+                status_code=400,
+                detail="Email already exists"
+            )
 
         user_id = str(uuid.uuid4())
 
         cursor.execute(
             """
             INSERT INTO users
-            (id,name,email,phone,password,role,wallet_balance,created_at)
+            (
+                id,
+                name,
+                email,
+                phone,
+                password,
+                role,
+                wallet_balance,
+                created_at
+            )
             VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
             """,
             (
@@ -156,7 +204,10 @@ async def register(payload: RegisterIn):
             )
         )
 
-    token = create_token(user_id, payload.role)
+    token = create_token(
+        user_id,
+        payload.role
+    )
 
     return {
         "message": "Registration successful",
@@ -177,12 +228,24 @@ async def login(payload: LoginIn):
         user = cursor.fetchone()
 
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials"
+        )
 
-    if not verify_password(payload.password, user["password"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not verify_password(
+        payload.password,
+        user["password"]
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials"
+        )
 
-    token = create_token(user["id"], user["role"])
+    token = create_token(
+        user["id"],
+        user["role"]
+    )
 
     return {
         "token": token,
@@ -193,9 +256,12 @@ async def login(payload: LoginIn):
             "role": user["role"]
         }
     }
+
+
 @app.get("/api/auth/me")
 async def me(user=Depends(get_current_user)):
     return user
+
 
 @app.post("/api/auth/otp/login/send")
 async def otp_login_send(payload: OTPRequest):
@@ -210,7 +276,10 @@ async def otp_login_send(payload: OTPRequest):
         user = cursor.fetchone()
 
     if not user:
-        raise HTTPException(status_code=404, detail="Mobile not registered")
+        raise HTTPException(
+            status_code=404,
+            detail="Mobile not registered"
+        )
 
     otp = str(random.randint(1000, 9999))
 
@@ -231,7 +300,11 @@ async def otp_login_send(payload: OTPRequest):
         )
 
         cursor.execute(
-            "INSERT INTO otp_codes (phone, otp) VALUES (%s,%s)",
+            """
+            INSERT INTO otp_codes
+            (phone, otp)
+            VALUES (%s,%s)
+            """,
             (payload.phone, otp)
         )
 
@@ -257,9 +330,11 @@ async def otp_login_send(payload: OTPRequest):
         response = requests.post(
             "https://control.msg91.com/api/v5/flow",
             json=data,
-            headers=headers
+            headers=headers,
+            timeout=15
         )
 
+        print(response.status_code)
         print(response.text)
 
     except Exception as e:
@@ -275,37 +350,53 @@ async def otp_login_send(payload: OTPRequest):
         "message": "OTP sent successfully"
     }
 
-@app.post("/api/auth/otp/login/verify")
-async def otp_login_verify(payload: dict):
 
-    phone = payload.get("phone")
-    otp = payload.get("otp")
+@app.post("/api/auth/otp/login/verify")
+async def otp_login_verify(
+    payload: OTPVerifyRequest
+):
 
     with conn.cursor() as cursor:
 
         cursor.execute(
-            "SELECT * FROM otp_codes WHERE phone=%s AND otp=%s",
-            (phone, otp)
+            """
+            SELECT *
+            FROM otp_codes
+            WHERE phone=%s AND otp=%s
+            """,
+            (
+                payload.phone,
+                payload.otp
+            )
         )
 
         otp_data = cursor.fetchone()
 
     if not otp_data:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid OTP"
+        )
 
     with conn.cursor() as cursor:
 
         cursor.execute(
             "SELECT * FROM users WHERE phone=%s",
-            (phone,)
+            (payload.phone,)
         )
 
         user = cursor.fetchone()
 
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
 
-    token = create_token(user["id"], user["role"])
+    token = create_token(
+        user["id"],
+        user["role"]
+    )
 
     return {
         "token": token,
@@ -316,10 +407,13 @@ async def otp_login_verify(payload: dict):
             "role": user["role"]
         }
     }
+
+
 @app.get("/api/properties")
 async def get_properties():
 
     with conn.cursor() as cursor:
+
         cursor.execute(
             "SELECT * FROM properties ORDER BY created_at DESC"
         )
@@ -342,16 +436,25 @@ async def property_details(property_id: str):
         property_data = cursor.fetchone()
 
     if not property_data:
-        raise HTTPException(status_code=404, detail="Property not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Property not found"
+        )
 
     return property_data
 
 
 @app.post("/api/properties")
-async def create_property(payload: PropertyIn, user=Depends(get_current_user)):
+async def create_property(
+    payload: PropertyIn,
+    user=Depends(get_current_user)
+):
 
     if user["role"] not in ["owner", "admin"]:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied"
+        )
 
     property_id = str(uuid.uuid4())
 
@@ -396,7 +499,10 @@ async def create_property(payload: PropertyIn, user=Depends(get_current_user)):
 
 
 @app.post("/api/bookings")
-async def create_booking(payload: BookingIn, user=Depends(get_current_user)):
+async def create_booking(
+    payload: BookingIn,
+    user=Depends(get_current_user)
+):
 
     booking_id = str(uuid.uuid4())
 
@@ -410,7 +516,10 @@ async def create_booking(payload: BookingIn, user=Depends(get_current_user)):
         property_data = cursor.fetchone()
 
         if not property_data:
-            raise HTTPException(status_code=404, detail="Property not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Property not found"
+            )
 
         cursor.execute(
             """
@@ -441,7 +550,9 @@ async def create_booking(payload: BookingIn, user=Depends(get_current_user)):
 
 
 @app.get("/api/bookings/me")
-async def my_bookings(user=Depends(get_current_user)):
+async def my_bookings(
+    user=Depends(get_current_user)
+):
 
     with conn.cursor() as cursor:
 
@@ -449,7 +560,8 @@ async def my_bookings(user=Depends(get_current_user)):
             """
             SELECT b.*, p.title
             FROM bookings b
-            JOIN properties p ON b.property_id = p.id
+            JOIN properties p
+            ON b.property_id = p.id
             WHERE b.tenant_id=%s
             ORDER BY b.created_at DESC
             """,
@@ -462,20 +574,31 @@ async def my_bookings(user=Depends(get_current_user)):
 
 
 @app.get("/api/admin/stats")
-async def admin_stats(user=Depends(get_current_user)):
+async def admin_stats(
+    user=Depends(get_current_user)
+):
 
     if user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
+        raise HTTPException(
+            status_code=403,
+            detail="Admin only"
+        )
 
     with conn.cursor() as cursor:
 
-        cursor.execute("SELECT COUNT(*) as total FROM users")
+        cursor.execute(
+            "SELECT COUNT(*) as total FROM users"
+        )
         users = cursor.fetchone()["total"]
 
-        cursor.execute("SELECT COUNT(*) as total FROM properties")
+        cursor.execute(
+            "SELECT COUNT(*) as total FROM properties"
+        )
         properties = cursor.fetchone()["total"]
 
-        cursor.execute("SELECT COUNT(*) as total FROM bookings")
+        cursor.execute(
+            "SELECT COUNT(*) as total FROM bookings"
+        )
         bookings = cursor.fetchone()["total"]
 
     return {
@@ -525,4 +648,3 @@ async def startup_seed():
             )
 
     print("MySQL backend started successfully")
-
