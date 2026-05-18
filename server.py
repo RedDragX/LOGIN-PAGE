@@ -30,7 +30,9 @@ app.add_middleware(
 JWT_SECRET = os.environ.get("JWT_SECRET", "secret")
 JWT_ALGORITHM = "HS256"
 
-conn = pymysql.connect(
+def get_db_connection():
+
+    return pymysql.connect(
     host=os.environ["srv1258.hstgr.io"],
     user=os.environ["u290914486_pgroom_user"],
     password=os.environ["Jupitereventcom@server1"],
@@ -128,7 +130,7 @@ async def get_current_user(
             detail="Invalid token"
         )
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             """
@@ -161,7 +163,7 @@ async def root():
 @app.post("/api/auth/register")
 async def register(payload: RegisterIn):
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT id FROM users WHERE email=%s",
@@ -218,7 +220,7 @@ async def register(payload: RegisterIn):
 @app.post("/api/auth/login")
 async def login(payload: LoginIn):
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT * FROM users WHERE email=%s",
@@ -266,7 +268,7 @@ async def me(user=Depends(get_current_user)):
 @app.post("/api/auth/otp/login/send")
 async def otp_login_send(payload: OTPRequest):
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT * FROM users WHERE phone=%s",
@@ -283,7 +285,7 @@ async def otp_login_send(payload: OTPRequest):
 
     otp = str(random.randint(1000, 9999))
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             """
@@ -356,7 +358,7 @@ async def otp_login_verify(
     payload: OTPVerifyRequest
 ):
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             """
@@ -378,7 +380,7 @@ async def otp_login_verify(
             detail="Invalid OTP"
         )
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT * FROM users WHERE phone=%s",
@@ -412,7 +414,7 @@ async def otp_login_verify(
 @app.get("/api/properties")
 async def get_properties():
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT * FROM properties ORDER BY created_at DESC"
@@ -426,7 +428,7 @@ async def get_properties():
 @app.get("/api/properties/{property_id}")
 async def property_details(property_id: str):
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT * FROM properties WHERE id=%s",
@@ -458,7 +460,7 @@ async def create_property(
 
     property_id = str(uuid.uuid4())
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             """
@@ -506,7 +508,7 @@ async def create_booking(
 
     booking_id = str(uuid.uuid4())
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT * FROM properties WHERE id=%s",
@@ -554,7 +556,7 @@ async def my_bookings(
     user=Depends(get_current_user)
 ):
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             """
@@ -584,7 +586,7 @@ async def admin_stats(
             detail="Admin only"
         )
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT COUNT(*) as total FROM users"
@@ -611,7 +613,7 @@ async def admin_stats(
 @app.on_event("startup")
 async def startup_seed():
 
-    with conn.cursor() as cursor:
+    conn = get_db_connection()
 
         cursor.execute(
             "SELECT id FROM users WHERE email='admin@pgroom.in'"
