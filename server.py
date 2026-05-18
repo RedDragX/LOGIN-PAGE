@@ -89,7 +89,7 @@ def normalize_phone(phone: str) -> str:
 
 class RegisterIn(BaseModel):
     name: str
-    email: EmailStr
+    email: Optional[EmailStr] = None
     phone: str
     password: str
     role: str = "tenant"
@@ -107,6 +107,17 @@ class OTPRequest(BaseModel):
 class OTPVerifyRequest(BaseModel):
     phone: str
     otp: str
+
+
+class OTPRegisterRequest(BaseModel):
+    name: Optional[str] = None
+    fullName: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
+
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
+    phoneNumber: Optional[str] = None
 
 
 class PropertyIn(BaseModel):
@@ -143,14 +154,24 @@ def create_token(user_id: str, role: str):
         "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS),
         "iat": datetime.utcnow(),
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    return jwt.encode(
+        payload,
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM
+    )
 
 
 def decode_token(token: str):
-    return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    return jwt.decode(
+        token,
+        JWT_SECRET,
+        algorithms=[JWT_ALGORITHM]
+    )
 
 
 def send_msg91_otp(phone: str, name: str, otp: str):
+
     if not MSG91_AUTHKEY or not MSG91_TEMPLATE_ID:
         return {
             "delivered": False,
@@ -175,341 +196,113 @@ def send_msg91_otp(phone: str, name: str, otp: str):
     }
 
     try:
+
         response = requests.post(
             "https://control.msg91.com/api/v5/flow",
             json=data,
             headers=headers,
             timeout=15,
         )
+
         try:
             body = response.json()
+
         except Exception:
             body = response.text
+
         return {
             "delivered": 200 <= response.status_code < 300,
             "status_code": response.status_code,
             "response": body,
         }
+
     except Exception as e:
+
         return {
             "delivered": False,
             "error": str(e),
         }
 
 
-async def get_current_user(authorization: Optional[str] = Header(None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def get_current_user(
+    authorization: Optional[str] = Header(None)
+):
 
-    token = authorization.replace("Bearer ", "", 1)
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized"
+        )
+
+    token = authorization.replace("Bearer ", "")
 
     try:
         payload = decode_token(token)
+
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token"
+        )
 
     user = db_fetchone(
         """
-        SELECT id, name, email, phone, role, wallet_balance
+        SELECT id,name,email,phone,role,wallet_balance
         FROM users
         WHERE id=%s
         """,
-        (payload["sub"],),
+        (payload["sub"],)
     )
 
     if not user:
-        raise HTTPException(status_code=401, detail="User not found")
+        raise HTTPException(
+            status_code=401,
+            detail="User not found"
+        )
 
     return user
 
 
 @app.get("/api")
 async def root():
+
     return {
         "status": "running",
-        "message": "pgroom mysql backend running",
+        "message": "pgroom mysql backend running"
     }
 
 
 @app.post("/api/auth/register")
 async def register(payload: RegisterIn):
+
     phone = normalize_phone(payload.phone)
 
     if len(phone) != 10:
-        raise HTTPException(status_code=400, detail="Phone must be a 10-digit number")
+        raise HTTPException(
+            status_code=400,
+            detail="Phone must be a 10-digit number"
+        )
 
     existing_email = db_fetchone(
         "SELECT id FROM users WHERE email=%s",
-        (payload.email,),
+        (payload.email,)
     )
+
     if existing_email:
-        raise HTTPException(status_code=400, detail="Email already exists")
+        raise HTTPException(
+            status_code=400,
+            detail="Email already exists"
+        )
 
     existing_phone = db_fetchone(
         "SELECT id FROM users WHERE phone=%s",
-        (phone,),
-    )
-    if existing_phone:
-        raise HTTPException(status_code=400, detail="Phone already exists")
-
-    user_id = str(uuid.uuid4())
-
-    db_execute(
-        """
-        INSERT INTO users
-        (id, name, email, phone, password, role, wallet_balance, created_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
-        """,
-        (
-            user_id,
-            payload.name,
-            payload.email,
-            phone,
-            hash_password(payload.password),
-            payload.role,
-            0,
-        ),
-    )
-
-    token = create_token(user_id, payload.role)
-
-    return {
-        "message": "Registration successful",
-        "token": token,
-        "user": {
-            "id": user_id,
-            "name": payload.name,
-            "email": payload.email,
-            "phone": phone,
-            "role": payload.role,
-        },
-    }
-
-
-@app.post("/api/auth/login")
-async def login(payload: LoginIn):
-    user = db_fetchone(
-        "SELECT * FROM users WHERE email=%s",
-        (payload.email,),
-    )
-
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    if not verify_password(payload.password, user["password"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    token = create_token(user["id"], user["role"])
-
-    return {
-        "token": token,
-        "user": {
-            "id": user["id"],
-            "name": user["name"],
-            "email": user["email"],
-            "role": user["role"],
-        },
-    }
-
-
-@app.get("/api/auth/me")
-async def me(user=Depends(get_current_user)):
-    return user
-
-
-@app.post("/api/auth/otp/login/send")
-async def otp_login_send(payload: OTPRequest):
-    phone = normalize_phone(payload.phone)
-
-    if len(phone) != 10:
-        raise HTTPException(status_code=400, detail="Enter a valid 10-digit mobile")
-
-    user = db_fetchone(
-        "SELECT * FROM users WHERE phone=%s",
-        (phone,),
-    )
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Mobile not registered")
-
-    otp = str(random.randint(1000, 9999))
-
-    db_execute(
-        """
-        CREATE TABLE IF NOT EXISTS otp_codes (
-            phone VARCHAR(20) PRIMARY KEY,
-            otp VARCHAR(10) NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            expires_at DATETIME NOT NULL
-        )
-        """
-    )
-
-    db_execute(
-        "DELETE FROM otp_codes WHERE phone=%s",
-        (phone,),
-    )
-
-    db_execute(
-        """
-        INSERT INTO otp_codes (phone, otp, created_at, expires_at)
-        VALUES (%s, %s, NOW(), DATE_ADD(NOW(), INTERVAL 10 MINUTE))
-        """,
-        (phone, otp),
-    )
-
-    delivery = send_msg91_otp(phone, user["name"], otp)
-
-    if delivery.get("delivered"):
-        return {
-            "message": "OTP sent successfully",
-            "delivered": True,
-        }
-
-    return {
-        "message": "OTP generated",
-        "delivered": False,
-        "otp": otp,
-        "provider": delivery,
-    }
-
-
-@app.post("/api/auth/otp/login/verify")
-async def otp_login_verify(payload: OTPVerifyRequest):
-    phone = normalize_phone(payload.phone)
-
-    otp_row = db_fetchone(
-        """
-        SELECT phone, otp, expires_at
-        FROM otp_codes
-        WHERE phone=%s AND otp=%s
-        """,
-        (phone, payload.otp),
-    )
-
-    if not otp_row:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-
-    if otp_row.get("expires_at") and otp_row["expires_at"] < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="OTP expired")
-
-    user = db_fetchone(
-        "SELECT * FROM users WHERE phone=%s",
-        (phone,),
-    )
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    token = create_token(user["id"], user["role"])
-
-    return {
-        "token": token,
-        "user": {
-            "id": user["id"],
-            "name": user["name"],
-            "email": user["email"],
-            "role": user["role"],
-            "phone": user["phone"],
-        },
-    }
-
-class OTPRegisterRequest(BaseModel):
-    name: str
-    email: Optional[EmailStr] = None
-    phone: str
-
-
-from typing import Optional
-from pydantic import BaseModel, EmailStr
-
-
-class OTPRegisterRequest(BaseModel):
-    name: Optional[str] = None
-    fullName: Optional[str] = None
-    email: Optional[EmailStr] = None
-    phone: Optional[str] = None
-    mobile: Optional[str] = None
-
-
-@app.post("/api/auth/otp/register/send")
-async def otp_register_send(payload: OTPRegisterRequest):
-
-    name = payload.name or payload.fullName
-    phone = payload.phone or payload.mobile
-
-    if not name:
-        raise HTTPException(
-            status_code=400,
-            detail="Name required"
-        )
-
-    if not phone:
-        raise HTTPException(
-            status_code=400,
-            detail="Phone required"
-        )
-
-    phone = normalize_phone(phone)
-
-    try:
-
-        conn.ping(reconnect=True)
-
-        with conn.cursor() as cursor:
-
-            cursor.execute(
-                "SELECT * FROM users WHERE phone=%s",
-                (phone,)
-            )
-
-            existing_user = cursor.fetchone()
-
-        if existing_user:
-
-            raise HTTPException(
-                status_code=400,
-                detail="Mobile already registered"
-            )
-
-        otp = "123456"
-
-        return {
-            "message": "OTP sent successfully",
-            "otp": otp,
-            "name": name,
-            "phone": phone
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        print("REGISTER OTP ERROR:", str(e))
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
-
-@app.post("/api/auth/otp/register/verify")
-async def otp_register_verify(payload: RegisterIn):
-
-    phone = normalize_phone(payload.phone)
-
-    otp_row = db_fetchone(
-        """
-        SELECT *
-        FROM otp_codes
-        WHERE phone=%s
-        """,
         (phone,)
     )
 
-    if not otp_row:
+    if existing_phone:
         raise HTTPException(
             status_code=400,
-            detail="OTP not found"
+            detail="Phone already exists"
         )
 
     user_id = str(uuid.uuid4())
@@ -547,9 +340,332 @@ async def otp_register_verify(payload: RegisterIn):
 
     return {
         "message": "Registration successful",
-        "token": token
+        "token": token,
+        "user": {
+            "id": user_id,
+            "name": payload.name,
+            "email": payload.email,
+            "phone": phone,
+            "role": payload.role
+        }
     }
-    
+
+
+@app.post("/api/auth/login")
+async def login(payload: LoginIn):
+
+    user = db_fetchone(
+        "SELECT * FROM users WHERE email=%s",
+        (payload.email,)
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials"
+        )
+
+    if not verify_password(
+        payload.password,
+        user["password"]
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials"
+        )
+
+    token = create_token(
+        user["id"],
+        user["role"]
+    )
+
+    return {
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"]
+        }
+    }
+
+
+@app.get("/api/auth/me")
+async def me(user=Depends(get_current_user)):
+    return user
+
+
+@app.post("/api/auth/otp/login/send")
+async def otp_login_send(payload: OTPRequest):
+
+    phone = normalize_phone(payload.phone)
+
+    if len(phone) != 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter a valid 10-digit mobile"
+        )
+
+    user = db_fetchone(
+        "SELECT * FROM users WHERE phone=%s",
+        (phone,)
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="Mobile not registered"
+        )
+
+    otp = str(random.randint(1000, 9999))
+
+    db_execute(
+        """
+        CREATE TABLE IF NOT EXISTS otp_codes (
+            phone VARCHAR(20) PRIMARY KEY,
+            otp VARCHAR(10) NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL
+        )
+        """
+    )
+
+    db_execute(
+        "DELETE FROM otp_codes WHERE phone=%s",
+        (phone,)
+    )
+
+    db_execute(
+        """
+        INSERT INTO otp_codes
+        (phone, otp, created_at, expires_at)
+        VALUES (%s,%s,NOW(),DATE_ADD(NOW(), INTERVAL 10 MINUTE))
+        """,
+        (phone, otp)
+    )
+
+    delivery = send_msg91_otp(
+        phone,
+        user["name"],
+        otp
+    )
+
+    return {
+        "message": "OTP sent successfully",
+        "otp": otp,
+        "delivery": delivery
+    }
+
+
+@app.post("/api/auth/otp/login/verify")
+async def otp_login_verify(payload: OTPVerifyRequest):
+
+    phone = normalize_phone(payload.phone)
+
+    otp_row = db_fetchone(
+        """
+        SELECT *
+        FROM otp_codes
+        WHERE phone=%s AND otp=%s
+        """,
+        (phone, payload.otp)
+    )
+
+    if not otp_row:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid OTP"
+        )
+
+    user = db_fetchone(
+        "SELECT * FROM users WHERE phone=%s",
+        (phone,)
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    token = create_token(
+        user["id"],
+        user["role"]
+    )
+
+    return {
+        "token": token,
+        "user": {
+            "id": user["id"],
+            "name": user["name"],
+            "email": user["email"],
+            "role": user["role"],
+            "phone": user["phone"]
+        }
+    }
+
+
+@app.post("/api/auth/otp/register/send")
+async def otp_register_send(payload: OTPRegisterRequest):
+
+    data = payload.dict()
+
+    name = (
+        data.get("name")
+        or data.get("fullName")
+        or data.get("username")
+        or "User"
+    )
+
+    phone = (
+        data.get("phone")
+        or data.get("mobile")
+        or data.get("phoneNumber")
+    )
+
+    if not phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Phone required"
+        )
+
+    phone = normalize_phone(phone)
+
+    if len(phone) != 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mobile number"
+        )
+
+    existing_user = db_fetchone(
+        "SELECT * FROM users WHERE phone=%s",
+        (phone,)
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Mobile already registered"
+        )
+
+    otp = str(random.randint(1000, 9999))
+
+    db_execute(
+        """
+        CREATE TABLE IF NOT EXISTS otp_codes (
+            phone VARCHAR(20) PRIMARY KEY,
+            otp VARCHAR(10) NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL
+        )
+        """
+    )
+
+    db_execute(
+        "DELETE FROM otp_codes WHERE phone=%s",
+        (phone,)
+    )
+
+    db_execute(
+        """
+        INSERT INTO otp_codes
+        (phone, otp, created_at, expires_at)
+        VALUES (%s,%s,NOW(),DATE_ADD(NOW(), INTERVAL 10 MINUTE))
+        """,
+        (phone, otp)
+    )
+
+    delivery = send_msg91_otp(
+        phone,
+        name,
+        otp
+    )
+
+    return {
+        "message": "OTP sent successfully",
+        "otp": otp,
+        "phone": phone,
+        "delivery": delivery
+    }
+
+
+@app.post("/api/auth/otp/register/verify")
+async def otp_register_verify(payload: RegisterIn):
+
+    phone = normalize_phone(payload.phone)
+
+    otp_row = db_fetchone(
+        """
+        SELECT *
+        FROM otp_codes
+        WHERE phone=%s
+        """,
+        (phone,)
+    )
+
+    if not otp_row:
+        raise HTTPException(
+            status_code=400,
+            detail="OTP not found"
+        )
+
+    existing_user = db_fetchone(
+        "SELECT * FROM users WHERE phone=%s",
+        (phone,)
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="User already exists"
+        )
+
+    user_id = str(uuid.uuid4())
+
+    db_execute(
+        """
+        INSERT INTO users
+        (
+            id,
+            name,
+            email,
+            phone,
+            password,
+            role,
+            wallet_balance,
+            created_at
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,NOW())
+        """,
+        (
+            user_id,
+            payload.name,
+            payload.email,
+            phone,
+            hash_password(payload.password),
+            payload.role,
+            0
+        )
+    )
+
+    token = create_token(
+        user_id,
+        payload.role
+    )
+
+    return {
+        "message": "Registration successful",
+        "token": token,
+        "user": {
+            "id": user_id,
+            "name": payload.name,
+            "email": payload.email,
+            "phone": phone,
+            "role": payload.role
+        }
+    }
+
+
 @app.get("/api/properties")
 async def get_properties(
     area: Optional[str] = None,
@@ -558,6 +674,7 @@ async def get_properties(
     max_rent: Optional[int] = None,
     q: Optional[str] = None,
 ):
+
     query = "SELECT * FROM properties WHERE 1=1"
     params = []
 
@@ -589,13 +706,17 @@ async def get_properties(
 
 @app.get("/api/properties/{property_id}")
 async def property_details(property_id: str):
+
     property_data = db_fetchone(
         "SELECT * FROM properties WHERE id=%s",
-        (property_id,),
+        (property_id,)
     )
 
     if not property_data:
-        raise HTTPException(status_code=404, detail="Property not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Property not found"
+        )
 
     return property_data
 
@@ -603,10 +724,14 @@ async def property_details(property_id: str):
 @app.post("/api/properties")
 async def create_property(
     payload: PropertyIn,
-    user=Depends(get_current_user),
+    user=Depends(get_current_user)
 ):
+
     if user["role"] not in ["owner", "admin"]:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied"
+        )
 
     property_id = str(uuid.uuid4())
 
@@ -638,30 +763,34 @@ async def create_property(
             payload.area,
             payload.gender,
             payload.rent,
-            payload.deposit,
-        ),
+            payload.deposit
+        )
     )
 
     return {
         "message": "Property created",
-        "property_id": property_id,
+        "property_id": property_id
     }
 
 
 @app.post("/api/bookings")
 async def create_booking(
     payload: BookingIn,
-    user=Depends(get_current_user),
+    user=Depends(get_current_user)
 ):
+
     booking_id = str(uuid.uuid4())
 
     property_data = db_fetchone(
         "SELECT * FROM properties WHERE id=%s",
-        (payload.property_id,),
+        (payload.property_id,)
     )
 
     if not property_data:
-        raise HTTPException(status_code=404, detail="Property not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Property not found"
+        )
 
     db_execute(
         """
@@ -681,55 +810,72 @@ async def create_booking(
             user["id"],
             payload.property_id,
             payload.visit_date,
-            "pending",
-        ),
+            "pending"
+        )
     )
 
     return {
         "message": "Booking created",
-        "booking_id": booking_id,
+        "booking_id": booking_id
     }
 
 
 @app.get("/api/bookings/me")
 async def my_bookings(user=Depends(get_current_user)):
+
     bookings = db_fetchall(
         """
         SELECT b.*, p.title
         FROM bookings b
-        JOIN properties p ON b.property_id = p.id
+        JOIN properties p
+        ON b.property_id = p.id
         WHERE b.tenant_id=%s
         ORDER BY b.created_at DESC
         """,
-        (user["id"],),
+        (user["id"],)
     )
+
     return bookings
 
 
 @app.get("/api/admin/stats")
 async def admin_stats(user=Depends(get_current_user)):
-    if user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
 
-    users = db_fetchone("SELECT COUNT(*) as total FROM users")
-    properties = db_fetchone("SELECT COUNT(*) as total FROM properties")
-    bookings = db_fetchone("SELECT COUNT(*) as total FROM bookings")
+    if user["role"] != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Admin only"
+        )
+
+    users = db_fetchone(
+        "SELECT COUNT(*) as total FROM users"
+    )
+
+    properties = db_fetchone(
+        "SELECT COUNT(*) as total FROM properties"
+    )
+
+    bookings = db_fetchone(
+        "SELECT COUNT(*) as total FROM bookings"
+    )
 
     return {
         "users": users["total"] if users else 0,
         "properties": properties["total"] if properties else 0,
-        "bookings": bookings["total"] if bookings else 0,
+        "bookings": bookings["total"] if bookings else 0
     }
 
 
 @app.on_event("startup")
 async def startup_seed():
+
     admin = db_fetchone(
         "SELECT id FROM users WHERE email=%s",
-        ("admin@pgroom.in",),
+        ("admin@pgroom.in",)
     )
 
     if not admin:
+
         db_execute(
             """
             INSERT INTO users
@@ -752,8 +898,8 @@ async def startup_seed():
                 "9999999999",
                 hash_password("admin123"),
                 "admin",
-                0,
-            ),
+                0
+            )
         )
 
     db_execute(
